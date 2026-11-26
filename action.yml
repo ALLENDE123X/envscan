@@ -1,0 +1,97 @@
+name: envscan
+description: Static checks for reward hacking and broken graders in RL environments (verifiers, Prime Environments Hub, Harbor tasks).
+author: Aginno
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  path:
+    description: Folder to scan. An environment, a single Harbor task, or a folder of Harbor tasks (one verdict per task).
+    required: false
+    default: "."
+  fail-on:
+    description: Fail the job at this level or worse. One of "likely", "review" or "never".
+    required: false
+    default: likely
+  sarif:
+    description: Where to write the SARIF 2.1.0 log, relative to the workspace.
+    required: false
+    default: envscan.sarif
+  upload-sarif:
+    description: 'Upload the SARIF log to GitHub code scanning with github/codeql-action/upload-sarif. The calling job needs "security-events: write".'
+    required: false
+    default: "false"
+  config:
+    description: Optional path to an .envscan.toml (default is the one at the root of the scanned folder).
+    required: false
+    default: ""
+  baseline:
+    description: Optional path to a baseline file written with --write-baseline. Only findings not in it are reported.
+    required: false
+    default: ""
+  category:
+    description: Code scanning category, to tell several scans in one repository apart.
+    required: false
+    default: envscan
+
+outputs:
+  exit-code:
+    description: "envscan exit code: 0 clean, 1 review, 2 likely, 3 scan error (before fail-on is applied by this action)."
+    value: ${{ steps.scan.outputs.exit-code }}
+  sarif-file:
+    description: Path of the SARIF log.
+    value: ${{ inputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run envscan
+      id: scan
+      shell: bash
+      env:
+        ENVSCAN_PATH: ${{ inputs.path }}
+        ENVSCAN_FAIL_ON: ${{ inputs.fail-on }}
+        ENVSCAN_SARIF: ${{ inputs.sarif }}
+        ENVSCAN_CONFIG: ${{ inputs.config }}
+        ENVSCAN_BASELINE: ${{ inputs.baseline }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+          echo "::error::envscan needs Python 3.11 or newer on the runner (add actions/setup-python before this step)"
+          echo "exit-code=3" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        args=("$ENVSCAN_PATH" --sarif "$ENVSCAN_SARIF" --sarif-base "$GITHUB_WORKSPACE")
+        [ -n "$ENVSCAN_CONFIG" ] && args+=(--config "$ENVSCAN_CONFIG")
+        [ -n "$ENVSCAN_BASELINE" ] && args+=(--baseline "$ENVSCAN_BASELINE")
+        set +e
+        PYTHONPATH="$ACTION_PATH" python3 -m envscan "${args[@]}"
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Upload SARIF to code scanning
+      if: ${{ inputs.upload-sarif == 'true' && hashFiles(inputs.sarif) != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif }}
+        category: ${{ inputs.category }}
+
+    - name: Apply fail-on
+      shell: bash
+      env:
+        ENVSCAN_FAIL_ON: ${{ inputs.fail-on }}
+        CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        case "$CODE" in
+          3) echo "::error::envscan could not scan the target (exit 3)"; exit 3 ;;
+        esac
+        case "$ENVSCAN_FAIL_ON" in
+          never) exit 0 ;;
+          review) [ "$CODE" -ge 1 ] && { echo "::error::envscan found issues at review level or worse"; exit 1; } ;;
+          likely) [ "$CODE" -ge 2 ] && { echo "::error::envscan found likely defects"; exit 1; } ;;
+          *) echo "::error::fail-on must be likely, review or never"; exit 3 ;;
+        esac
+        exit 0

@@ -1,0 +1,9 @@
+- id: envscan
+  name: envscan
+  description: Static checks for reward hacking and broken graders in RL environments.
+  entry: envscan
+  language: python
+  language_version: python3
+  args: ["--fail-on", "likely", "."]
+  pass_filenames: false
+  always_run: true

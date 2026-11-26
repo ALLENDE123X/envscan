@@ -1,0 +1,17 @@
+[project]
+license = "Apache-2.0"
+name = "envscan"
+version = "0.5.0"
+description = "Static checks for reward hacking and broken graders in verifiers / Prime Environments Hub environments"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+envscan = "envscan.cli:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["envscan"]
